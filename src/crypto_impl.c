@@ -52,6 +52,7 @@
    struct and associated functions are defined here */
 typedef struct {
   int derive_key;
+  int use_key_directly;
   EVP_CIPHER *evp_cipher;
   EVP_CIPHER_CTX ectx;
   HMAC_CTX hctx;
@@ -490,6 +491,12 @@ int sqlcipher_codec_ctx_get_flag(codec_ctx *ctx, unsigned int flag, int for_ctx)
   return (c_ctx->flags & flag) != 0;
 }
 
+int sqlcipher_codec_ctx_set_use_key_directly(codec_ctx *ctx, int use) {
+  ctx->write_ctx->use_key_directly = ctx->read_ctx->use_key_directly = use;
+  ctx->write_ctx->derive_key = ctx->read_ctx->derive_key = 1;
+  return SQLITE_OK;
+}
+
 void sqlcipher_codec_ctx_set_error(codec_ctx *ctx, int error) {
   CODEC_TRACE(("sqlcipher_codec_ctx_set_error: ctx=%p, error=%d\n", ctx, error));
   sqlite3pager_sqlite3PagerSetError(ctx->pBt->pBt->pPager, error);
@@ -531,7 +538,7 @@ int sqlcipher_codec_ctx_get_pagesize(codec_ctx *ctx) {
   return ctx->page_sz;
 }
 
-int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_file *fd, const void *zKey, int nKey) {
+int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_file *fd, const void *zKey, int nKey, int useKeyDirectly) {
   int rc;
   codec_ctx *ctx;
   *iCtx = sqlcipher_malloc(sizeof(codec_ctx));
@@ -579,6 +586,8 @@ int sqlcipher_codec_ctx_init(codec_ctx **iCtx, Db *pDb, Pager *pPager, sqlite3_f
   /* Note that use_hmac is a special case that requires recalculation of page size
      so we call set_use_hmac to perform setup */
   if((rc = sqlcipher_codec_ctx_set_use_hmac(ctx, default_flags & CIPHER_FLAG_HMAC)) != SQLITE_OK) return rc;
+
+  if((rc = sqlcipher_codec_ctx_set_use_key_directly(ctx, useKeyDirectly)) != SQLITE_OK) return rc;
 
   if((rc = sqlcipher_cipher_ctx_copy(ctx->write_ctx, ctx->read_ctx)) != SQLITE_OK) return rc;
 
@@ -748,7 +757,10 @@ int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
                 
 
   if(c_ctx->pass && c_ctx->pass_sz) { // if pass is not null
-    if (c_ctx->pass_sz == ((c_ctx->key_sz*2)+3) && sqlite3StrNICmp(c_ctx->pass ,"x'", 2) == 0) { 
+    if (c_ctx->use_key_directly && (c_ctx->pass_sz == c_ctx->key_sz)) { 
+      CODEC_TRACE(("codec_key_derive: using raw key\n")); 
+      memcpy(c_ctx->key, c_ctx->pass, c_ctx->key_sz);
+    } else if (c_ctx->pass_sz == ((c_ctx->key_sz*2)+3) && sqlite3StrNICmp(c_ctx->pass ,"x'", 2) == 0) { 
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
       const char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
       CODEC_TRACE(("codec_key_derive: using raw key from hex\n")); 

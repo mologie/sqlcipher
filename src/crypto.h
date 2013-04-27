@@ -148,7 +148,7 @@ void sqlcipher_free(void *, int);
 /* activation and initialization */
 void sqlcipher_activate();
 void sqlcipher_deactivate();
-int sqlcipher_codec_ctx_init(codec_ctx **, Db *, Pager *, sqlite3_file *, const void *, int);
+int sqlcipher_codec_ctx_init(codec_ctx **, Db *, Pager *, sqlite3_file *, const void *, int, int);
 void sqlcipher_codec_ctx_free(codec_ctx **);
 int sqlcipher_codec_key_derive(codec_ctx *);
 int sqlcipher_codec_key_copy(codec_ctx *, int);

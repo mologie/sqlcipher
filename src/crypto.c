@@ -277,7 +277,7 @@ void sqlite3FreeCodecArg(void *pCodecArg) {
   sqlcipher_deactivate(); /* cleanup related structures, OpenSSL etc, when codec is detatched */
 }
 
-int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
+int sqlite3CodecAttach2(sqlite3* db, int nDb, const void *zKey, int nKey, int useKeyDirectly) {
   struct Db *pDb = &db->aDb[nDb];
 
   CODEC_TRACE(("sqlite3CodecAttach: entered nDb=%d zKey=%s, nKey=%d\n", nDb, (char *)zKey, nKey));
@@ -292,7 +292,7 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
     sqlcipher_activate(); /* perform internal initialization for sqlcipher */
 
     /* point the internal codec argument against the contet to be prepared */
-    rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, fd, zKey, nKey); 
+    rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, fd, zKey, nKey, useKeyDirectly); 
 
     if(rc != SQLITE_OK) return rc; /* initialization failed, do not attach potentially corrupted context */
 
@@ -318,6 +318,10 @@ int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
   return SQLITE_OK;
 }
 
+int sqlite3CodecAttach(sqlite3* db, int nDb, const void *zKey, int nKey) {
+	return sqlite3CodecAttach2(db, nDb, zKey, nKey, 0);
+}
+
 void sqlite3_activate_see(const char* in) {
   /* do nothing, security enhancements are always active */
 }
@@ -327,6 +331,15 @@ int sqlite3_key(sqlite3 *db, const void *pKey, int nKey) {
   /* attach key if db and pKey are not null and nKey is > 0 */
   if(db && pKey && nKey) {
     return sqlite3CodecAttach(db, 0, pKey, nKey); // operate only on the main db 
+  }
+  return SQLITE_ERROR;
+}
+
+int sqlite3_rawkey(sqlite3 *db, const void *pKey, int nKey) {
+  CODEC_TRACE(("sqlite3_key: entered db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey));
+  /* attach key if db and pKey are not null and nKey is > 0 */
+  if(db && pKey && nKey) {
+    return sqlite3CodecAttach2(db, 0, pKey, nKey, 1); // operate only on the main db 
   }
   return SQLITE_ERROR;
 }
