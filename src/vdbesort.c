@@ -18,7 +18,6 @@
 #include "sqliteInt.h"
 #include "vdbeInt.h"
 
-#ifndef SQLITE_OMIT_MERGE_SORT
 
 typedef struct VdbeSorterIter VdbeSorterIter;
 typedef struct SorterRecord SorterRecord;
@@ -55,7 +54,7 @@ typedef struct FileWriter FileWriter;
 ** other key value. If the keys are equal (only possible with two EOF
 ** values), it doesn't matter which index is stored.
 **
-** The (N/4) elements of aTree[] that preceed the final (N/2) described 
+** The (N/4) elements of aTree[] that precede the final (N/2) described 
 ** above contains the index of the smallest of each block of 4 iterators.
 ** And so on. So that aTree[1] contains the index of the iterator that 
 ** currently points to the smallest key value. aTree[0] is unused.
@@ -195,8 +194,11 @@ static int vdbeSorterIterRead(
     int rc;                       /* sqlite3OsRead() return code */
 
     /* Determine how many bytes of data to read. */
-    nRead = (int)(p->iEof - p->iReadOff);
-    if( nRead>p->nBuffer ) nRead = p->nBuffer;
+    if( (p->iEof - p->iReadOff) > (i64)p->nBuffer ){
+      nRead = p->nBuffer;
+    }else{
+      nRead = (int)(p->iEof - p->iReadOff);
+    }
     assert( nRead>0 );
 
     /* Read data from the file. Return early if an error occurs. */
@@ -1034,5 +1036,3 @@ int sqlite3VdbeSorterCompare(
   vdbeSorterCompare(pCsr, 1, pVal->z, pVal->n, pKey, nKey, pRes);
   return SQLITE_OK;
 }
-
-#endif /* #ifndef SQLITE_OMIT_MERGE_SORT */

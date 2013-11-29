@@ -1081,6 +1081,8 @@ static int fts3InitVtab(
   char *zUncompress = 0;          /* uncompress=? parameter (or NULL) */
   char *zContent = 0;             /* content=? parameter (or NULL) */
   char *zLanguageid = 0;          /* languageid=? parameter (or NULL) */
+  char **azNotindexed = 0;        /* The set of notindexed= columns */
+  int nNotindexed = 0;            /* Size of azNotindexed[] array */
 
   assert( strlen(argv[0])==4 );
   assert( (sqlite3_strnicmp(argv[0], "fts4", 4)==0 && isFts4)
@@ -1090,9 +1092,19 @@ static int fts3InitVtab(
   nDb = (int)strlen(argv[1]) + 1;
   nName = (int)strlen(argv[2]) + 1;
 
-  aCol = (const char **)sqlite3_malloc(sizeof(const char *) * (argc-2) );
-  if( !aCol ) return SQLITE_NOMEM;
-  memset((void *)aCol, 0, sizeof(const char *) * (argc-2));
+  nByte = sizeof(const char *) * (argc-2);
+  aCol = (const char **)sqlite3_malloc(nByte);
+  if( aCol ){
+    memset((void*)aCol, 0, nByte);
+    azNotindexed = (char **)sqlite3_malloc(nByte);
+  }
+  if( azNotindexed ){
+    memset(azNotindexed, 0, nByte);
+  }
+  if( !aCol || !azNotindexed ){
+    rc = SQLITE_NOMEM;
+    goto fts3_init_out;
+  }
 
   /* Loop through all of the arguments passed by the user to the FTS3/4
   ** module (i.e. all the column names and special arguments). This loop
@@ -1131,7 +1143,8 @@ static int fts3InitVtab(
         { "uncompress", 10 },     /* 3 -> UNCOMPRESS */
         { "order",       5 },     /* 4 -> ORDER */
         { "content",     7 },     /* 5 -> CONTENT */
-        { "languageid", 10 }      /* 6 -> LANGUAGEID */
+        { "languageid", 10 },     /* 6 -> LANGUAGEID */
+        { "notindexed", 10 }      /* 7 -> NOTINDEXED */
       };
 
       int iOpt;
@@ -1195,6 +1208,11 @@ static int fts3InitVtab(
               assert( iOpt==6 );
               sqlite3_free(zLanguageid);
               zLanguageid = zVal;
+              zVal = 0;
+              break;
+
+            case 7:              /* NOTINDEXED */
+              azNotindexed[nNotindexed++] = zVal;
               zVal = 0;
               break;
           }
@@ -1268,6 +1286,7 @@ static int fts3InitVtab(
   nByte = sizeof(Fts3Table) +                  /* Fts3Table */
           nCol * sizeof(char *) +              /* azColumn */
           nIndex * sizeof(struct Fts3Index) +  /* aIndex */
+          nCol * sizeof(u8) +                  /* abNotindexed */
           nName +                              /* zName */
           nDb +                                /* zDb */
           nString;                             /* Space for azColumn strings */
@@ -1301,9 +1320,10 @@ static int fts3InitVtab(
   for(i=0; i<nIndex; i++){
     fts3HashInit(&p->aIndex[i].hPending, FTS3_HASH_STRING, 1);
   }
+  p->abNotindexed = (u8 *)&p->aIndex[nIndex];
 
   /* Fill in the zName and zDb fields of the vtab structure. */
-  zCsr = (char *)&p->aIndex[nIndex];
+  zCsr = (char *)&p->abNotindexed[nCol];
   p->zName = zCsr;
   memcpy(zCsr, argv[2], nName);
   zCsr += nName;
@@ -1324,7 +1344,26 @@ static int fts3InitVtab(
     assert( zCsr <= &((char *)p)[nByte] );
   }
 
-  if( (zCompress==0)!=(zUncompress==0) ){
+  /* Fill in the abNotindexed array */
+  for(iCol=0; iCol<nCol; iCol++){
+    int n = (int)strlen(p->azColumn[iCol]);
+    for(i=0; i<nNotindexed; i++){
+      char *zNot = azNotindexed[i];
+      if( zNot && 0==sqlite3_strnicmp(p->azColumn[iCol], zNot, n) ){
+        p->abNotindexed[iCol] = 1;
+        sqlite3_free(zNot);
+        azNotindexed[i] = 0;
+      }
+    }
+  }
+  for(i=0; i<nNotindexed; i++){
+    if( azNotindexed[i] ){
+      *pzErr = sqlite3_mprintf("no such column: %s", azNotindexed[i]);
+      rc = SQLITE_ERROR;
+    }
+  }
+
+  if( rc==SQLITE_OK && (zCompress==0)!=(zUncompress==0) ){
     char const *zMiss = (zCompress==0 ? "compress" : "uncompress");
     rc = SQLITE_ERROR;
     *pzErr = sqlite3_mprintf("missing %s parameter in fts4 constructor", zMiss);
@@ -1365,7 +1404,9 @@ fts3_init_out:
   sqlite3_free(zUncompress);
   sqlite3_free(zContent);
   sqlite3_free(zLanguageid);
+  for(i=0; i<nNotindexed; i++) sqlite3_free(azNotindexed[i]);
   sqlite3_free((void *)aCol);
+  sqlite3_free((void *)azNotindexed);
   if( rc!=SQLITE_OK ){
     if( p ){
       fts3DisconnectMethod((sqlite3_vtab *)p);
@@ -1423,7 +1464,7 @@ static int fts3BestIndexMethod(sqlite3_vtab *pVTab, sqlite3_index_info *pInfo){
   ** strategy is possible.
   */
   pInfo->idxNum = FTS3_FULLSCAN_SEARCH;
-  pInfo->estimatedCost = 500000;
+  pInfo->estimatedCost = 5000000;
   for(i=0; i<pInfo->nConstraint; i++){
     struct sqlite3_index_constraint *pCons = &pInfo->aConstraint[i];
     if( pCons->usable==0 ) continue;
@@ -1571,7 +1612,7 @@ static int fts3CursorSeek(sqlite3_context *pContext, Fts3Cursor *pCsr){
       }else{
         rc = sqlite3_reset(pCsr->pStmt);
         if( rc==SQLITE_OK && ((Fts3Table *)pCsr->base.pVtab)->zContentTbl==0 ){
-          /* If no row was found and no error has occured, then the %_content
+          /* If no row was found and no error has occurred, then the %_content
           ** table is missing a row that is present in the full-text index.
           ** The data structures are corrupt.  */
           rc = FTS_CORRUPT_VTAB;
@@ -2811,7 +2852,7 @@ static void fts3SegReaderCursorFree(Fts3MultiSegReader *pSegcsr){
 }
 
 /*
-** This function retreives the doclist for the specified term (or term
+** This function retrieves the doclist for the specified term (or term
 ** prefix) from the database.
 */
 static int fts3TermSelect(
@@ -2975,22 +3016,16 @@ static int fts3FilterMethod(
     pCsr->iLangid = 0;
     if( nVal==2 ) pCsr->iLangid = sqlite3_value_int(apVal[1]);
 
+    assert( p->base.zErrMsg==0 );
     rc = sqlite3Fts3ExprParse(p->pTokenizer, pCsr->iLangid,
-        p->azColumn, p->bFts4, p->nColumn, iCol, zQuery, -1, &pCsr->pExpr
+        p->azColumn, p->bFts4, p->nColumn, iCol, zQuery, -1, &pCsr->pExpr, 
+        &p->base.zErrMsg
     );
     if( rc!=SQLITE_OK ){
-      if( rc==SQLITE_ERROR ){
-        static const char *zErr = "malformed MATCH expression: [%s]";
-        p->base.zErrMsg = sqlite3_mprintf(zErr, zQuery);
-      }
       return rc;
     }
 
-    rc = sqlite3Fts3ReadLock(p);
-    if( rc!=SQLITE_OK ) return rc;
-
     rc = fts3EvalStart(pCsr);
-
     sqlite3Fts3SegmentsClose(p);
     if( rc!=SQLITE_OK ) return rc;
     pCsr->pNextId = pCsr->aDoclist;
@@ -3562,7 +3597,7 @@ void sqlite3Fts3IcuTokenizerModule(sqlite3_tokenizer_module const**ppModule);
 #endif
 
 /*
-** Initialise the fts3 extension. If this extension is built as part
+** Initialize the fts3 extension. If this extension is built as part
 ** of the sqlite library, then this function is called directly by
 ** SQLite. If fts3 is built as a dynamically loadable extension, this
 ** function is called by the sqlite3_extension_init() entry point.
@@ -3596,7 +3631,7 @@ int sqlite3Fts3Init(sqlite3 *db){
   sqlite3Fts3SimpleTokenizerModule(&pSimple);
   sqlite3Fts3PorterTokenizerModule(&pPorter);
 
-  /* Allocate and initialise the hash-table used to store tokenizers. */
+  /* Allocate and initialize the hash-table used to store tokenizers. */
   pHash = sqlite3_malloc(sizeof(Fts3Hash));
   if( !pHash ){
     rc = SQLITE_NOMEM;
@@ -3646,8 +3681,12 @@ int sqlite3Fts3Init(sqlite3 *db){
           db, "fts4", &fts3Module, (void *)pHash, 0
       );
     }
+    if( rc==SQLITE_OK ){
+      rc = sqlite3Fts3InitTok(db, (void *)pHash);
+    }
     return rc;
   }
+
 
   /* An error has occurred. Delete the hash table and return the error code. */
   assert( rc!=SQLITE_OK );
@@ -4743,35 +4782,39 @@ static int fts3EvalNearTest(Fts3Expr *pExpr, int *pRc){
       nTmp += p->pRight->pPhrase->doclist.nList;
     }
     nTmp += p->pPhrase->doclist.nList;
-    aTmp = sqlite3_malloc(nTmp*2);
-    if( !aTmp ){
-      *pRc = SQLITE_NOMEM;
+    if( nTmp==0 ){
       res = 0;
     }else{
-      char *aPoslist = p->pPhrase->doclist.pList;
-      int nToken = p->pPhrase->nToken;
+      aTmp = sqlite3_malloc(nTmp*2);
+      if( !aTmp ){
+        *pRc = SQLITE_NOMEM;
+        res = 0;
+      }else{
+        char *aPoslist = p->pPhrase->doclist.pList;
+        int nToken = p->pPhrase->nToken;
 
-      for(p=p->pParent;res && p && p->eType==FTSQUERY_NEAR; p=p->pParent){
-        Fts3Phrase *pPhrase = p->pRight->pPhrase;
-        int nNear = p->nNear;
-        res = fts3EvalNearTrim(nNear, aTmp, &aPoslist, &nToken, pPhrase);
+        for(p=p->pParent;res && p && p->eType==FTSQUERY_NEAR; p=p->pParent){
+          Fts3Phrase *pPhrase = p->pRight->pPhrase;
+          int nNear = p->nNear;
+          res = fts3EvalNearTrim(nNear, aTmp, &aPoslist, &nToken, pPhrase);
+        }
+
+        aPoslist = pExpr->pRight->pPhrase->doclist.pList;
+        nToken = pExpr->pRight->pPhrase->nToken;
+        for(p=pExpr->pLeft; p && res; p=p->pLeft){
+          int nNear;
+          Fts3Phrase *pPhrase;
+          assert( p->pParent && p->pParent->pLeft==p );
+          nNear = p->pParent->nNear;
+          pPhrase = (
+              p->eType==FTSQUERY_NEAR ? p->pRight->pPhrase : p->pPhrase
+              );
+          res = fts3EvalNearTrim(nNear, aTmp, &aPoslist, &nToken, pPhrase);
+        }
       }
-  
-      aPoslist = pExpr->pRight->pPhrase->doclist.pList;
-      nToken = pExpr->pRight->pPhrase->nToken;
-      for(p=pExpr->pLeft; p && res; p=p->pLeft){
-        int nNear;
-        Fts3Phrase *pPhrase;
-        assert( p->pParent && p->pParent->pLeft==p );
-        nNear = p->pParent->nNear;
-        pPhrase = (
-            p->eType==FTSQUERY_NEAR ? p->pRight->pPhrase : p->pPhrase
-        );
-        res = fts3EvalNearTrim(nNear, aTmp, &aPoslist, &nToken, pPhrase);
-      }
+
+      sqlite3_free(aTmp);
     }
-
-    sqlite3_free(aTmp);
   }
 
   return res;
@@ -5191,7 +5234,7 @@ int sqlite3Fts3EvalPhraseStats(
 ** of the current row. 
 **
 ** More specifically, the returned buffer contains 1 varint for each 
-** occurence of the phrase in the column, stored using the normal (delta+2) 
+** occurrence of the phrase in the column, stored using the normal (delta+2) 
 ** compression and is terminated by either an 0x01 or 0x00 byte. For example,
 ** if the requested column contains "a b X c d X X" and the position-list
 ** for 'X' is requested, the buffer returned may contain:
@@ -5333,7 +5376,10 @@ int sqlite3Fts3Corrupt(){
 /*
 ** Initialize API pointer table, if required.
 */
-int sqlite3_extension_init(
+#ifdef _WIN32
+__declspec(dllexport)
+#endif
+int sqlite3_fts3_init(
   sqlite3 *db, 
   char **pzErrMsg,
   const sqlite3_api_routines *pApi
