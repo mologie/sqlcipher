@@ -313,7 +313,7 @@ static int sqlite3CodecAttach2(sqlite3* db, int nDb, const void *zKey, int nKey,
     sqlite3_mutex_enter(db->mutex);
 
     /* point the internal codec argument against the contet to be prepared */
-    rc = sqlite3CodecAttach2(&ctx, pDb, pDb->pBt->pBt->pPager, fd, zKey, nKey, useKeyDirectly);
+    rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, fd, zKey, nKey, useKeyDirectly);
 
     if(rc != SQLITE_OK) return rc; /* initialization failed, do not attach potentially corrupted context */
 
