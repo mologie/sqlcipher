@@ -834,10 +834,15 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
                 
 
   if(c_ctx->pass && c_ctx->pass_sz) { // if pass is not null
-    if (c_ctx->use_key_directly && (c_ctx->pass_sz == c_ctx->key_sz)) { 
-      CODEC_TRACE(("codec_key_derive: using raw key\n")); 
-      memcpy(c_ctx->key, c_ctx->pass, c_ctx->key_sz);
-    else if (c_ctx->pass_sz == ((c_ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0) { 
+    if (c_ctx->use_key_directly) {
+      CODEC_TRACE(("cipher_ctx_key_derive: using raw key\n"));
+      if (c_ctx->pass_sz == c_ctx->key_sz) {
+        memcpy(c_ctx->key, c_ctx->pass, c_ctx->key_sz);
+      } else {
+        CODE_TRACE(("cipher_ctx_key_derive: key size mismatch; expected %d btyes, got %d bytes", c_ctx->key_sz, c_ctx->pass_sz));
+        return SQLITE_ERROR;
+      }
+    } else if (c_ctx->pass_sz == ((c_ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0) {
       int n = c_ctx->pass_sz - 3; /* adjust for leading x' and tailing ' */
       const unsigned char *z = c_ctx->pass + 2; /* adjust lead offset of x' */
       CODEC_TRACE(("cipher_ctx_key_derive: using raw key from hex\n")); 

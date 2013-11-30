@@ -296,7 +296,7 @@ void sqlite3FreeCodecArg(void *pCodecArg) {
   sqlcipher_deactivate(); /* cleanup related structures, OpenSSL etc, when codec is detatched */
 }
 
-int sqlite3CodecAttach2(sqlite3* db, int nDb, const void *zKey, int nKey, int useKeyDirectly) {
+static int sqlite3CodecAttach2(sqlite3* db, int nDb, const void *zKey, int nKey, int useKeyDirectly) {
   struct Db *pDb = &db->aDb[nDb];
 
   CODEC_TRACE(("sqlite3CodecAttach: entered nDb=%d zKey=%s, nKey=%d\n", nDb, (char *)zKey, nKey));
@@ -313,7 +313,7 @@ int sqlite3CodecAttach2(sqlite3* db, int nDb, const void *zKey, int nKey, int us
     sqlite3_mutex_enter(db->mutex);
 
     /* point the internal codec argument against the contet to be prepared */
-    rc = sqlcipher_codec_ctx_init(&ctx, pDb, pDb->pBt->pBt->pPager, fd, zKey, nKey, useKeyDirectly); 
+    rc = sqlite3CodecAttach2(&ctx, pDb, pDb->pBt->pBt->pPager, fd, zKey, nKey, useKeyDirectly);
 
     if(rc != SQLITE_OK) return rc; /* initialization failed, do not attach potentially corrupted context */
 
@@ -391,8 +391,6 @@ int sqlite3_rawkey_v2(sqlite3 *db, const char *zDb, const void *pKey, int nKey) 
 
 int sqlite3_rekey(sqlite3 *db, const void *pKey, int nKey) {
   CODEC_TRACE(("sqlite3_rekey entered: db=%p pKey=%s nKey=%d\n", db, (char *)pKey, nKey));
-  /* attach key if db and pKey are not null and nKey is > 0 */
-  if(db && pKey && nKey) {
   return sqlite3_rekey_v2(db, "main", pKey, nKey);
 }
 
