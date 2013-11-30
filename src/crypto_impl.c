@@ -839,7 +839,7 @@ static int sqlcipher_cipher_ctx_key_derive(codec_ctx *ctx, cipher_ctx *c_ctx) {
       if (c_ctx->pass_sz == c_ctx->key_sz) {
         memcpy(c_ctx->key, c_ctx->pass, c_ctx->key_sz);
       } else {
-        CODE_TRACE(("cipher_ctx_key_derive: key size mismatch; expected %d btyes, got %d bytes", c_ctx->key_sz, c_ctx->pass_sz));
+        CODEC_TRACE(("cipher_ctx_key_derive: key size mismatch; expected %d btyes, got %d bytes", c_ctx->key_sz, c_ctx->pass_sz));
         return SQLITE_ERROR;
       }
     } else if (c_ctx->pass_sz == ((c_ctx->key_sz * 2) + 3) && sqlite3StrNICmp((const char *)c_ctx->pass ,"x'", 2) == 0) {
